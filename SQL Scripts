@@ -1,0 +1,530 @@
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  	CHECKING FOR CURRENT DATABASE SIZE
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+use 
+go
+set nocount on
+print ''
+select  convert (varchar(30),db_name()) [Database Name] ,convert(dec(15, 2), sum(size) * 8.0 / 1024) [Data Size (MB)] ,convert(dec(15, 2), sum(fileproperty(name,'SpaceUsed')) * 8.0 / 1024) [Data Used (MB)] ,convert(dec(15, 2), sum(fileproperty(name,'SpaceUsed')) * 1.0 / sum(size) * 100) [% Data Used] from dbo.sysfiles where groupid <> 0
+
+select  convert (varchar(30),db_name()) [Database Name],convert(dec(15, 2), sum(size) * 8.0 / 1024) [Log Size (MB)],convert(dec(15, 2), sum(fileproperty(name,'SpaceUsed')) * 8.0 / 1024) [Log Used (MB)],convert(dec(15, 2), sum(fileproperty(name,'SpaceUsed')) * 1.0 / sum(size) * 100) [% Log Used] from dbo.sysfiles where groupid = 0
+
+select  a.groupid ID,case when groupname is NULL then 'N/A' else convert (varchar(20),groupname) end [Group Name],substring(filename, 1, 1) Drive,convert (varchar(35),[name]) [File Name],convert(dec(15, 2), size * 8.0 / 1024) [File Size (MB)],convert(dec(15, 2), fileproperty(name,'SpaceUsed') * 8.0 / 1024) [File Used (MB)],convert(dec(15, 2), fileproperty(name,'SpaceUsed') * 1.0 / size * 100) [% File Used], case when growth = 0 then 'N/A' when growth < 128 then convert(varchar, growth) + '%' else convert(varchar, convert(dec, growth * 8.0 / 1024)) end [Growth Size (MB)],case when growth = 0 then 'N/A' when maxsize = -1 then 'UNLIMITED' else convert(varchar, convert(dec, maxsize * 8.0 / 1024)) end [Max Size (MB)] from dbo.sysfiles a left join dbo.sysfilegroups b on a.groupid = b.groupid order by a.groupid
+go
+
+***************************************************************************
+-- 		To get the total physical memory installed on SQL Server 	------
+**************************************************************************
+SELECT [total_physical_memory_kb] / 1024 AS [Total_Physical_Memory_In_MB]
+FROM [master].[sys].[dm_os_sys_memory]
+go
+SELECT name, value 
+FROM sys.configurations
+WHERE name like '%server memory%'
+ORDER BY name OPTION (RECOMPILE);
+GO
+
+--**************************************************************************
+--     DATABASE BACKUP HISTORY FOR A SINGLE DATABASE               --------
+--**************************************************************************
+
+USE 
+GO
+-- Get Backup History for required database
+SELECT TOP 100
+s.database_name,
+m.physical_device_name,
+CAST(CAST(s.backup_size / 1000000 AS INT) AS VARCHAR(14)) + ' ' + 'MB' AS bkSize,
+CAST(DATEDIFF(second, s.backup_start_date,
+s.backup_finish_date) AS VARCHAR(4)) + ' ' + 'Seconds' TimeTaken,
+s.backup_start_date,
+CAST(s.first_lsn AS VARCHAR(50)) AS first_lsn,
+CAST(s.last_lsn AS VARCHAR(50)) AS last_lsn,
+CASE s.[type]
+WHEN 'D' THEN 'Full'
+WHEN 'I' THEN 'Differential'
+WHEN 'L' THEN 'Transaction Log'
+END AS BackupType,
+s.server_name,
+s.recovery_model
+FROM msdb.dbo.backupset s
+INNER JOIN msdb.dbo.backupmediafamily m ON s.media_set_id = m.media_set_id
+WHERE s.database_name = DB_NAME() -- Remove this line for all the database
+-- and s.type = 'l' 
+ORDER BY backup_start_date DESC, backup_finish_date
+GO
+
+--**************************************************************************
+-- MOST RECENT BACKUP-------------------------------------------------------
+--**************************************************************************
+
+
+SELECT MAX(a.backup_finish_date) lastbackup, type, b.name
+FROM msdb..backupset a
+INNER JOIN master..sysdatabases b ON a.database_name COLLATE DATABASE_DEFAULT = b.name COLLATE DATABASE_DEFAULT
+--where type='D'
+GROUP BY b.name, type
+ORDER BY 1 desc 
+go
+
+
+--**************************************************************************
+-- MOST RECENT RESTORE -----------------------------------------------------
+--**************************************************************************
+
+select  top 20 substring(r.user_name,1,30) user_who_did_the_refresh,  r.restore_type, r.restore_history_id , r.restore_date , substring(r.destination_database_name,1,30) destination_database_name,m.physical_device_name--1 b.backup_finish_date
+from msdb..backupset b
+join msdb..restorehistory r on b.backup_set_id = r.backup_set_id
+inner join msdb.dbo.backupmediafamily m on m.media_set_id=b.media_set_id
+--where r.restore_type='I'
+order by r.restore_date desc
+go
+
+
+--**************************************************************************
+-- PERCENT COMPLETION OF BACKUP/RESTORE ------------------------------------
+--**************************************************************************
+use master
+go
+
+SELECT
+@@Servername as [Server Name]
+,b.name AS [Database Name]
+,a.command AS "Command"
+,a.start_time AS [Start Time]
+,a.percent_complete AS [Percent Complete]
+,DATEADD(ms,estimated_completion_time,GETDATE()) AS [Estimated End Time]
+,(estimated_completion_time/1000/60.0) AS [Estimated Minutes To End]
+FROM sys.dm_exec_requests a
+INNER JOIN sys.databases b ON a.database_id = b.database_id
+WHERE a.command like '%BACKUP%' or 
+a.command like '%RESTORE%'
+AND a.estimated_completion_time > 0 
+
+--***********************************************************************
+-- SSAS BLOCKING 
+--***********************************************************************
+Lock status of 0 indicates blocking.
+SELECT * from $system.discover_locks
+
+LOCK_STATUS of 0 within this DMV indicates blocking
+********************************************************************************
+----TEMPDB FULL-CLEAR CACHE------------
+********************************************************************************
+dbcc opentran()
+dbcc freeproccache()
+dbcc dropcleanbuffers()
+dBCC FREESYSTEMCACHE ('ALL')
+DBCC FREESESSIONCACHE()
+
+*************************************************
+Store Procedure last Execution
+********************************************
+USE Egypt_DW
+GO
+SELECT 
+ O.name,
+ PS.last_execution_time
+FROM 
+ sys.dm_exec_procedure_stats PS 
+INNER JOIN sys.objects O 
+ ON O.[object_id] = PS.[object_id] 
+GO
+
+********************************************************
+Mirroring : SELECT @@SERVERNAME, COUNT(*)  from sys.database_mirroring where mirroring_state IS NOT NULL 
+Always ON : select * from sys.availability_replicas
+Log shipping : sp_help_log_shipping_monitor 
+
+
+Recpvery Model of all DB : select name, recovery_model_desc from sys.databases
+
+SELECT percent_complete, estimated_completion_time from sys.dm_exec_requests where session_id = 57
+select * from sys.sysprocesses where open_tran=1
+
+exisiting connection: select * from sys.sysprocesses where dbid = DB_ID ('db name')
+
+sp_change_users_login 'report'
+sp_change_users_login 'auto_fix','linke_user'
+
+DB Engine Restarted: Event Vwr-System-filter 1074
+Database Offline: Event Vwr-Applcation-filter-5084
+
+select partitionrootpath,partitionname. * from EnterpriseVaultDirectory.dbo.PartitionEntry
+where Partitionname='GBRLON02Archivingstore01 Ptn01'
+
+Login Group members : exec xp_logininfo 'jticorp\RUSMOS01-Russia M&S and BA-Business Applications', 'members'
+
+SELECT is_broker_enabled FROM sys.databases WHERE name = 'Database name';
+
+Wait Type: SELECT name, log_reuse_wait_desc FROM sys.databases;
+
+**--- TABLE LEVEL BACKUP ---***
+select * into [qp6].[/S170/MVAM_ETVAL_20170717] from [qp6].[/S170/MVAM_ETVAL]
+
+*** ----- Copy Table from One database to another database on same server --****
+select * into abc.dbo.MS2 from Test.dbo.MS1 
+
+**-- Truncate Data in Table -- *****
+Truncate table [qp6].[/S170/MVAM_ETVAL]
+
+Check the Database name with location  :  select db_name(database_id), physical_name,* from sys.master_files 
+
+Hung sessions  :  select * from sys.sysprocesses where cmd like 'Backup%'
+
+Rename Database : ALTER DATABASE eMQF  Modify Name = eMQF_19Sep2017 ; 
+
+Object Level Permissions : GRANT INSERT,SELECT, DELETE,UPDATE ON TABLENAME TO USER;
+
+WMI Provider issue solution : run cmd as admin, need to change value 140 as per the server and execute
+mofcomp "C:\Program Files (x86)\Microsoft SQL Server\140\Shared\sqlmgmproviderxpsp2up.mof"
+
+Delete SAP* from Server
+Delete from qa6.USR02 where BNAME=’SAP*’ and MANDT=001 
+Select * from qa8.USR02 where BNAME='SAP*'
+
+SMO ISSUE : goto path C:\Program Files\avs\bin in CMD and execute below
+avsql --operation=browse --verbose  
+
+Installed by Check 
+C:\Program Files\Microsoft SQL Server\130\Setup Bootstrap\Log\InstallationDate\sql_engine_core_inst_Cpu64_1.txt
+
+**********************
+Logins
+
+select * from sys.syslogins where name like '%SB6%'
+
+-- 0x0105000000000005150000003FAD146293E36248828BA628BEDC0900
+
+select  * from sysusers
+
+*********************
+
+Show plan permission for all Databases.
+
+ EXEC sp_MSforeachdb N'IF EXISTS
+(
+SELECT 1 FROM sys.databases WHERE name = "?"
+AND Is_read_only <> 1
+)
+BEGIN
+print "Use [?]; GRANT Showplan TO [jticorp\hclsachinkz]"
+END'; 
+
+
+***************************************************************
+***********  Performance  ******************
+SELECT s.session_id
+    ,r.STATUS
+    ,r.blocking_session_id 'blocked by'
+    ,r.wait_type
+    ,wait_resource
+    ,r.wait_time / (1000.0) 'Wait Time (in Sec)'
+    ,r.cpu_time
+    ,r.logical_reads
+    ,r.reads
+    ,r.writes
+    ,r.total_elapsed_time / (1000.0) 'Elapsed Time (in Sec)'
+    ,Substring(st.TEXT, (r.statement_start_offset / 2) + 1, (
+            (
+                CASE r.statement_end_offset
+                    WHEN - 1
+                        THEN Datalength(st.TEXT)
+                    ELSE r.statement_end_offset
+                    END - r.statement_start_offset
+                ) / 2
+            ) + 1) AS statement_text
+    ,Coalesce(Quotename(Db_name(st.dbid)) + N'.' + Quotename(Object_schema_name(st.objectid, st.dbid)) + N'.' + 
+     Quotename(Object_name(st.objectid, st.dbid)), '') AS command_text
+    ,r.command
+    ,s.login_name
+    ,s.host_name
+    ,s.program_name
+    ,s.host_process_id
+    ,s.last_request_end_time
+    ,s.login_time
+    ,r.open_transaction_count
+FROM sys.dm_exec_sessions AS s
+INNER JOIN sys.dm_exec_requests AS r ON r.session_id = s.session_id
+CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) AS st
+WHERE r.session_id != @@SPID
+ORDER BY r.cpu_time DESC
+    ,r.STATUS
+    ,r.blocking_session_id
+    ,s.session_id
+
+=========================================================
+
+SELECT
+	r.session_id
+,	r.start_time
+,	TotalElapsedTime_ms = r.total_elapsed_time
+,	r.[status]
+,	r.command
+,	DatabaseName = DB_Name(r.database_id)
+,	r.wait_type
+,	r.last_wait_type
+,	r.wait_resource
+,	r.cpu_time
+,	r.reads
+,	r.writes
+,	r.logical_reads
+,	t.[text] AS [executing batch]
+,	SUBSTRING(
+				t.[text], r.statement_start_offset / 2, 
+				(	CASE WHEN r.statement_end_offset = -1 THEN DATALENGTH (t.[text]) 
+						 ELSE r.statement_end_offset 
+					END - r.statement_start_offset ) / 2 
+			 ) AS [executing statement] 
+,	p.query_plan
+FROM
+	sys.dm_exec_requests r
+CROSS APPLY
+	sys.dm_exec_sql_text(r.sql_handle) AS t
+CROSS APPLY	
+	sys.dm_exec_query_plan(r.plan_handle) AS p
+ORDER BY 
+	r.total_elapsed_time DESC;
+
+***************************************************************
+
+ 
+SELECT @@servername as servername,
+       users.[name] AS UserAtDBLevel,
+       susers.[name] AS LogInAtServerLevel,
+       DB_NAME() AS [Database],              
+       roles.name AS DatabaseRoleMembership
+ from sys.database_principals users
+  inner join sys.database_role_members link
+   on link.member_principal_id = users.principal_id
+  inner join sys.database_principals roles
+   on roles.principal_id = link.role_principal_id
+   inner join sys.server_principals susers
+   on susers.sid = users.sid 
+
+*****************************************************
+Users and their role on Database.
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+SELECT  
+    [UserName] = CASE memberprinc.[type] 
+                    WHEN 'S' THEN memberprinc.[name]
+                    WHEN 'U' THEN ulogin.[name] COLLATE Latin1_General_CI_AI
+                 END,
+    [UserType] = CASE memberprinc.[type]
+                    WHEN 'S' THEN 'SQL User'
+                    WHEN 'U' THEN 'Windows User'
+                 END, 
+    [DatabaseUserName] = memberprinc.[name],   
+    [Role] = roleprinc.[name],      
+    [PermissionType] = perm.[permission_name],       
+    [PermissionState] = perm.[state_desc],       
+    [ObjectType] = obj.type_desc,--perm.[class_desc],   
+    [ObjectName] = OBJECT_NAME(perm.major_id),
+    [ColumnName] = col.[name]
+FROM    
+    --Role/member associations
+    sys.database_role_members members
+JOIN
+    --Roles
+    sys.database_principals roleprinc ON roleprinc.[principal_id] = members.[role_principal_id]
+JOIN
+    --Role members (database users)
+    sys.database_principals memberprinc ON memberprinc.[principal_id] = members.[member_principal_id]
+LEFT JOIN
+    --Login accounts
+    sys.login_token ulogin on memberprinc.[sid] = ulogin.[sid]
+LEFT JOIN        
+    --Permissions
+    sys.database_permissions perm ON perm.[grantee_principal_id] = roleprinc.[principal_id]
+LEFT JOIN
+    --Table columns
+    sys.columns col on col.[object_id] = perm.major_id 
+                    AND col.[column_id] = perm.[minor_id]
+LEFT JOIN
+    sys.objects obj ON perm.[major_id] = obj.[object_id]
+	
+---------------------------
+SP_HELPUSER
+---------------------------
+	
+************************************************************************************************************************************************
+Database growth rate per month
+******************************************************
+SELECT
+[database_name] AS "Database",
+DATEPART(month,[backup_start_date]) AS "Month",
+AVG([backup_size]/1024/1024) AS "Backup Size MB",
+AVG([compressed_backup_size]/1024/1024) AS "Compressed Backup Size MB",
+AVG([backup_size]/[compressed_backup_size]) AS "Compression Ratio"
+FROM msdb.dbo.backupset
+WHERE [database_name] = N'AdventureWorks'
+AND [type] = 'D'
+GROUP BY [database_name],DATEPART(mm,[backup_start_date]);
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+CHECK ALL TABLE SIZE ON DATABASE
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+SELECT 
+    t.NAME AS TableName,
+    s.Name AS SchemaName,
+    p.rows AS RowCounts,
+    SUM(a.total_pages) * 8 AS TotalSpaceKB, 
+    CAST(ROUND(((SUM(a.total_pages) * 8) / 1024.00), 2) AS NUMERIC(36, 2)) AS TotalSpaceMB,
+    SUM(a.used_pages) * 8 AS UsedSpaceKB, 
+    CAST(ROUND(((SUM(a.used_pages) * 8) / 1024.00), 2) AS NUMERIC(36, 2)) AS UsedSpaceMB, 
+    (SUM(a.total_pages) - SUM(a.used_pages)) * 8 AS UnusedSpaceKB,
+    CAST(ROUND(((SUM(a.total_pages) - SUM(a.used_pages)) * 8) / 1024.00, 2) AS NUMERIC(36, 2)) AS UnusedSpaceMB
+FROM 
+    sys.tables t
+INNER JOIN      
+    sys.indexes i ON t.OBJECT_ID = i.object_id
+INNER JOIN 
+    sys.partitions p ON i.object_id = p.OBJECT_ID AND i.index_id = p.index_id
+INNER JOIN 
+    sys.allocation_units a ON p.partition_id = a.container_id
+LEFT OUTER JOIN 
+    sys.schemas s ON t.schema_id = s.schema_id
+WHERE 
+    t.NAME NOT LIKE 'dt%' 
+    AND t.is_ms_shipped = 0
+    AND i.OBJECT_ID > 255 
+GROUP BY 
+    t.Name, s.Name, p.Rows
+ORDER BY 
+    t.Name
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+     Backup of multiple scripts
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+DECLARE @name VARCHAR(50) -- database name  
+DECLARE @path VARCHAR(256) -- path for backup files  
+DECLARE @fileName VARCHAR(256) -- filename for backup  
+DECLARE @fileDate VARCHAR(20) -- used for file name
+ 
+-- specify database backup directory
+SET @path = 'E:\CHG135739_FinalBackup\'  
+ 
+-- specify filename format
+SELECT @fileDate = CONVERT(VARCHAR(20),GETDATE(),112) 
+ 
+DECLARE db_cursor CURSOR READ_ONLY FOR  
+SELECT name 
+FROM master.dbo.sysdatabases 
+WHERE name IN (
+'netapp_size_stat',
+'EnterpriseVaultDirectory',
+'EnterpriseVaultMonitoring',
+'EVVSGERTRI01ARCHIVE01_1',
+
+)  -- system databases are excluded
+ 
+OPEN db_cursor   
+FETCH NEXT FROM db_cursor INTO @name   
+ 
+WHILE @@FETCH_STATUS = 0   
+BEGIN   
+   SET @fileName = @path + @name + '_' + @fileDate + '.BAK'  
+   BACKUP DATABASE @name TO DISK = @fileName with compression  
+ 
+   FETCH NEXT FROM db_cursor INTO @name   
+END   
+
+ 
+CLOSE db_cursor   
+DEALLOCATE db_cursor
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+	Check size of all Database Offline
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+SELECT
+   DB_NAME(db.database_id) as [DB Name],
+   CONVERT(DECIMAL(6,3),SUM((CONVERT(DECIMAL(20,5),mf.size)*8)/1048576)) as [DB Size in GB]
+FROM
+   sys.databases db
+   LEFT JOIN sys.master_files mf 
+      ON db.database_id = mf.database_id
+WHERE
+   db.state_desc = 'OFFLINE'
+GROUP BY
+   DB_NAME(db.database_id)
+ORDER BY
+   [DB Name]
+
+Another query : select name, * from sys.databases where state_desc like '%offline%'
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+		HeadBlocker
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+		EXEC sp_WhoIsActive 
+    @find_block_leaders = 1
+
+EXEC sp_WhoIsActive 
+    @find_block_leaders = 1, 
+    @sort_order = '[blocked_session_count] DESC' 
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+		Fragementation
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+SELECT dbschemas.[name] as 'Schema', 
+dbtables.[name] as 'Table', 
+dbindexes.[name] as 'Index',
+indexstats.avg_fragmentation_in_percent,
+indexstats.page_count
+FROM sys.dm_db_index_physical_stats (DB_ID(), NULL, NULL, NULL, NULL) AS indexstats
+INNER JOIN sys.tables dbtables on dbtables.[object_id] = indexstats.[object_id]
+INNER JOIN sys.schemas dbschemas on dbtables.[schema_id] = dbschemas.[schema_id]
+INNER JOIN sys.indexes AS dbindexes ON dbindexes.[object_id] = indexstats.[object_id]
+AND indexstats.index_id = dbindexes.index_id
+WHERE indexstats.database_id = DB_ID()
+ORDER BY indexstats.avg_fragmentation_in_percent desc
+
+OR
+
+SELECT OBJECT_NAME(ind.OBJECT_ID) AS TableName, 
+ind.name AS IndexName, indexstats.index_type_desc AS IndexType, 
+indexstats.avg_fragmentation_in_percent 
+FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, NULL) indexstats 
+INNER JOIN sys.indexes ind  
+ON ind.object_id = indexstats.object_id 
+AND ind.index_id = indexstats.index_id 
+WHERE indexstats.avg_fragmentation_in_percent > 30 
+ORDER BY indexstats.avg_fragmentation_in_percent DESC
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+	Checke permissions on database
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+DECLARE @tracefile VARCHAR(500)
+-- Get path of default trace file
+SELECT @tracefile = CAST(value AS VARCHAR(500))
+FROM ::fn_trace_getinfo(DEFAULT)
+WHERE traceid = 1
+AND property = 2
+
+-- Get security changes from the default trace
+SELECT *
+ FROM ::fn_trace_gettable(@tracefile, DEFAULT) trcdata -- DEFAULT means all trace files will be read
+ INNER JOIN sys.trace_events evt ON trcdata.EventClass = evt.trace_event_id
+ WHERE trcdata.EventClass IN (102, 103, 104, 105, 106, 108, 109, 110, 111)
+ ORDER BY trcdata.StartTime
+                 --trcdata.DatabaseID
+                 --trcdata.TargetLoginName
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+	Check EXECUTE permission
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+SELECT dp.name
+    , perms.class_desc
+    , perms.permission_name
+    , perms.state_desc
+FROM sys.database_permissions perms
+    INNER JOIN sys.database_principals dp ON perms.grantee_principal_id = dp.principal_id 
+WHERE dp.name = 'JTICORP\Z_GVASQL314'
+
