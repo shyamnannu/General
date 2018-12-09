@@ -1,0 +1,11 @@
+
+use 
+go
+set nocount on
+print ''
+select  convert (varchar(30),db_name()) [Database Name] ,convert(dec(15, 2), sum(size) * 8.0 / 1024) [Data Size (MB)] ,convert(dec(15, 2), sum(fileproperty(name,'SpaceUsed')) * 8.0 / 1024) [Data Used (MB)] ,convert(dec(15, 2), sum(fileproperty(name,'SpaceUsed')) * 1.0 / sum(size) * 100) [% Data Used] from dbo.sysfiles where groupid <> 0
+
+select  convert (varchar(30),db_name()) [Database Name],convert(dec(15, 2), sum(size) * 8.0 / 1024) [Log Size (MB)],convert(dec(15, 2), sum(fileproperty(name,'SpaceUsed')) * 8.0 / 1024) [Log Used (MB)],convert(dec(15, 2), sum(fileproperty(name,'SpaceUsed')) * 1.0 / sum(size) * 100) [% Log Used] from dbo.sysfiles where groupid = 0
+
+select  a.groupid ID,case when groupname is NULL then 'N/A' else convert (varchar(20),groupname) end [Group Name],substring(filename, 1, 1) Drive,convert (varchar(35),[name]) [File Name],convert(dec(15, 2), size * 8.0 / 1024) [File Size (MB)],convert(dec(15, 2), fileproperty(name,'SpaceUsed') * 8.0 / 1024) [File Used (MB)],convert(dec(15, 2), fileproperty(name,'SpaceUsed') * 1.0 / size * 100) [% File Used], case when growth = 0 then 'N/A' when growth < 128 then convert(varchar, growth) + '%' else convert(varchar, convert(dec, growth * 8.0 / 1024)) end [Growth Size (MB)],case when growth = 0 then 'N/A' when maxsize = -1 then 'UNLIMITED' else convert(varchar, convert(dec, maxsize * 8.0 / 1024)) end [Max Size (MB)] from dbo.sysfiles a left join dbo.sysfilegroups b on a.groupid = b.groupid order by a.groupid
+go
